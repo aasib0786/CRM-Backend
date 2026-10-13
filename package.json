@@ -1,0 +1,51 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "nodemon server.js",
+    "start": "node server.js",
+    "db:init": "node src/initDb.js",
+    "migrate:make": "knex --knexfile knexfile.cjs migrate:make",
+    "migrate": "knex --knexfile knexfile.cjs migrate:latest",
+    "migrate:rollback": "knex --knexfile knexfile.cjs migrate:rollback",
+    "test:bot": "node --test tests/bot-unit.test.js",
+    "test:bot:e2e": "node scripts/run-bot-e2e-test.js",
+    "test:llm": "node scripts/test-llm.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google/genai": "^0.1.1",
+    "axios": "^1.10.0",
+    "bcrypt": "^6.0.0",
+    "cloudinary": "^2.6.1",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "db-migrate": "^0.11.13",
+    "db-migrate-pg": "^1.2.2",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "geoip-lite": "^1.4.10",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "knex": "^3.2.9",
+    "lodash": "^4.17.21",
+    "mongoose": "^8.15.0",
+    "morgan": "^1.10.0",
+    "multer": "^2.1.1",
+    "node-cache": "^5.1.2",
+    "node-fetch": "^3.3.2",
+    "nodemailer": "^7.0.13",
+    "nodemon": "^3.1.10",
+    "pg": "^8.20.0",
+    "razorpay": "^2.9.6",
+    "short-unique-id": "^5.3.2"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6"
+  }
+}

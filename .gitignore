@@ -1,0 +1,27 @@
+# Node modules
+node_modules/
+
+
+# Logs
+logs/
+*.log
+
+# dotenv environment variables
+.env
+.env.*          
+
+# Build output
+dist/
+build/
+
+# Optional npm cache directory
+.npm
+
+
+
+# Others
+*.local
+public/images/
+public/*.pdf
+
+/src/generated/prisma
