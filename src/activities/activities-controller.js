@@ -133,6 +133,12 @@ export const getActivities = async (req, res) => {
     let query = `SELECT * FROM public.activities WHERE 1=1`;
     const params = [];
 
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+    if (companyId) {
+      params.push(companyId);
+      query += ` AND company_id = $${params.length}`;
+    }
+
     // Date filter: if specific date provided (YYYY-MM-DD)
     if (date && date !== 'all') {
       params.push(date);

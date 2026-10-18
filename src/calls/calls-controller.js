@@ -120,6 +120,7 @@ export const getCalls = async (req, res) => {
   try {
     await ensureSeedCalls();
 
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
     const { search, status, agent } = req.query;
     let query = `
       SELECT c.*, u.name as user_name
@@ -128,6 +129,11 @@ export const getCalls = async (req, res) => {
       WHERE 1=1
     `;
     const params = [];
+
+    if (companyId) {
+      params.push(companyId);
+      query += ` AND c.company_id = $${params.length}`;
+    }
 
     if (search && search.trim()) {
       params.push(`%${search.trim().toLowerCase()}%`);
@@ -187,6 +193,14 @@ export const getCallStats = async (req, res) => {
   try {
     await ensureSeedCalls();
 
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+    let whereFilter = 'WHERE 1=1';
+    const sParams = [];
+    if (companyId) {
+      sParams.push(companyId);
+      whereFilter += ` AND company_id = $${sParams.length}`;
+    }
+
     // Query today's calls and overall stats
     const statsQuery = `
       SELECT 
@@ -196,8 +210,9 @@ export const getCallStats = async (req, res) => {
         COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE AND LOWER(status) IN ('missed', 'busy', 'no answer')) as missed_today,
         COALESCE(AVG(duration_seconds) FILTER (WHERE duration_seconds > 0), 0) as avg_duration_seconds
       FROM public.calls
+      ${whereFilter}
     `;
-    const { rows } = await connectDB.query(statsQuery);
+    const { rows } = await connectDB.query(statsQuery, sParams);
     const s = rows[0] || {};
 
     const avgSecs = Math.round(parseFloat(s.avg_duration_seconds || 0));
@@ -252,10 +267,11 @@ export const createCall = async (req, res) => {
     const durSecs = duration_seconds || durationSeconds || parseDurationToSecs(duration);
     const durStr = duration || formatSecsToDuration(durSecs);
     const callAgent = agent || req.user?.name || req.user?.email || 'Agent';
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.body?.company_id || null;
 
     const { rows } = await connectDB.query(
-      `INSERT INTO public.calls (contact_name, phone, direction, duration, duration_seconds, status, outcome, purpose, agent, recording_url, notes, lead_id, user_id, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW()) RETURNING *`,
+      `INSERT INTO public.calls (contact_name, phone, direction, duration, duration_seconds, status, outcome, purpose, agent, recording_url, notes, lead_id, user_id, company_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW()) RETURNING *`,
       [
         contactName,
         phone || '',
@@ -270,6 +286,7 @@ export const createCall = async (req, res) => {
         notes || null,
         validLeadId,
         validUserId,
+        companyId,
       ]
     );
 
@@ -384,7 +401,16 @@ export const getScheduledCalls = async (req, res) => {
   try {
     await ensureSeedScheduledCalls();
 
-    const { rows } = await connectDB.query(`SELECT * FROM public.scheduled_calls ORDER BY scheduled_time ASC`);
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+    let schedQuery = `SELECT * FROM public.scheduled_calls WHERE 1=1`;
+    const sParams = [];
+    if (companyId) {
+      sParams.push(companyId);
+      schedQuery += ` AND company_id = $${sParams.length}`;
+    }
+    schedQuery += ` ORDER BY scheduled_time ASC`;
+
+    const { rows } = await connectDB.query(schedQuery, sParams);
 
     const formatted = rows.map((r) => {
       const d = new Date(r.scheduled_time);
@@ -428,10 +454,11 @@ export const createScheduledCall = async (req, res) => {
     const validLeadId = rawLeadId && typeof rawLeadId === 'string' && /^[0-9a-fA-F-]{36}$/.test(rawLeadId.trim())
       ? rawLeadId.trim()
       : null;
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.body?.company_id || null;
 
     const { rows } = await connectDB.query(
-      `INSERT INTO public.scheduled_calls (lead_name, company, phone, scheduled_time, purpose, agent, notes, status, lead_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'Scheduled', $8) RETURNING *`,
+      `INSERT INTO public.scheduled_calls (lead_name, company, phone, scheduled_time, purpose, agent, notes, status, lead_id, company_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'Scheduled', $8, $9) RETURNING *`,
       [
         leadName || 'Lead',
         company || '',
@@ -441,6 +468,7 @@ export const createScheduledCall = async (req, res) => {
         agent || req.user?.name || 'Agent',
         notes || '',
         validLeadId,
+        companyId,
       ]
     );
 

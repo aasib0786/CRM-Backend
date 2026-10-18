@@ -269,6 +269,13 @@ export const getLeads = async (req, res) => {
         const values = [];
         let idx = 1;
 
+        const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+        if (companyId) {
+            conditions.push(`l.company_id::text = $${idx}`);
+            values.push(String(companyId));
+            idx++;
+        }
+
         // Team Hierarchy Access Control:
         // Rule: A lead is visible ONLY to the assigned agent and their superiors up the hierarchy chain.
         const hierarchy = await getHierarchyAllowedAssignees(req.user);
@@ -622,13 +629,15 @@ export const createLead = async (req, res) => {
             }
         }
 
+        const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.body?.company_id || null;
+
         const result = await connectDB.query(
             `INSERT INTO leads (
         name, company, phone, email, source, stage, priority,
         assigned, industry, value, score, score_factors, tags, notes,
-        project_id, custom_fields, extra_fields,
+        project_id, custom_fields, extra_fields, company_id,
         last_activity, created_at, updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NOW(),NOW(),NOW())
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,NOW(),NOW(),NOW())
       RETURNING *`,
             [
                 name.trim(),
@@ -648,6 +657,7 @@ export const createLead = async (req, res) => {
                 finalProjectId || null,
                 JSON.stringify(finalCustomFields),
                 JSON.stringify(finalExtraFields),
+                companyId,
             ]
         );
 

@@ -163,7 +163,8 @@ export const login = async (req, res) => {
 // POST /auth/sing-up
 export const singUp = async (req, res) => {
   try {
-    const { name, email, password, role, branch, phone } = req.body;
+    const { name, email, password, role, branch, phone, company_id, companyId } = req.body;
+    const finalCompanyId = company_id || companyId || null;
 
     if (!name?.trim()) return res.status(400).json({ success: false, message: 'Name is required' });
     if (!email?.trim()) return res.status(400).json({ success: false, message: 'Email is required' });
@@ -180,16 +181,17 @@ export const singUp = async (req, res) => {
     const hashedPassword = await hashPassword(password.trim());
 
     const result = await connectDB.query(
-      `INSERT INTO users (name, email, phone, password_hash, role, branch, is_active, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, true, NOW())
+      `INSERT INTO users (name, email, phone, password_hash, role, branch, company_id, is_active, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, true, NOW())
        RETURNING id, name, email, phone, role, branch, company_id, is_active, created_at`,
       [
         name.trim(),
         email.trim().toLowerCase(),
         phone?.trim() || null,
         hashedPassword,
-        role || 'sales_executive',
+        role || 'owner_/_ceo',
         branch?.trim() || null,
+        finalCompanyId,
       ]
     );
 
@@ -416,6 +418,13 @@ export const getAllUsers = async (req, res) => {
     const conditions = [];
     const values = [];
     let idx = 1;
+
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+    if (companyId) {
+      conditions.push(`u.company_id = $${idx}`);
+      values.push(companyId);
+      idx++;
+    }
 
     if (search) {
       conditions.push(`(u.name ILIKE $${idx} OR u.email ILIKE $${idx})`);
