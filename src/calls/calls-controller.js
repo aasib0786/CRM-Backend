@@ -133,6 +133,8 @@ export const getCalls = async (req, res) => {
     if (companyId) {
       params.push(companyId);
       query += ` AND c.company_id = $${params.length}`;
+    } else {
+      query += ` AND 1=0`;
     }
 
     if (search && search.trim()) {
@@ -191,14 +193,14 @@ export const getCalls = async (req, res) => {
 // ── GET DYNAMIC CALL STATS ──
 export const getCallStats = async (req, res) => {
   try {
-    await ensureSeedCalls();
-
     const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
     let whereFilter = 'WHERE 1=1';
     const sParams = [];
     if (companyId) {
       sParams.push(companyId);
       whereFilter += ` AND company_id = $${sParams.length}`;
+    } else {
+      whereFilter += ` AND 1=0`;
     }
 
     // Query today's calls and overall stats
@@ -399,14 +401,14 @@ export const deleteCall = async (req, res) => {
 // ── GET SCHEDULED CALLS ──
 export const getScheduledCalls = async (req, res) => {
   try {
-    await ensureSeedScheduledCalls();
-
     const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
     let schedQuery = `SELECT * FROM public.scheduled_calls WHERE 1=1`;
     const sParams = [];
     if (companyId) {
       sParams.push(companyId);
       schedQuery += ` AND company_id = $${sParams.length}`;
+    } else {
+      schedQuery += ` AND 1=0`;
     }
     schedQuery += ` ORDER BY scheduled_time ASC`;
 

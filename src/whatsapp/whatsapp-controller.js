@@ -84,17 +84,31 @@ const toConversationDTO = (chat, messages = []) => {
 
 export const getWhatsAppChats = async (req, res) => {
   try {
-    const hierarchy = await getHierarchyAllowedAssignees(req.user);
-    let hierarchyWhere = '';
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+    const conditions = [];
     const queryParams = [];
+    let pIdx = 1;
+
+    if (companyId) {
+      conditions.push(`c.company_id::text = $${pIdx}`);
+      queryParams.push(String(companyId));
+      pIdx++;
+    } else {
+      conditions.push(`1=0`);
+    }
+
+    const hierarchy = await getHierarchyAllowedAssignees(req.user);
     if (hierarchy && hierarchy.allowedList && hierarchy.allowedList.length > 0) {
       if (hierarchy.isManager) {
-        hierarchyWhere = `WHERE (c.assigned_agent = ANY($1::text[]) OR c.assigned_agent ILIKE ANY($1::text[]) OR c.assigned_agent IS NULL OR TRIM(c.assigned_agent) = '' OR c.assigned_agent = 'Unassigned')`;
+        conditions.push(`(c.assigned_agent = ANY($${pIdx}::text[]) OR c.assigned_agent ILIKE ANY($${pIdx}::text[]) OR c.assigned_agent IS NULL OR TRIM(c.assigned_agent) = '' OR c.assigned_agent = 'Unassigned')`);
       } else {
-        hierarchyWhere = `WHERE (c.assigned_agent = ANY($1::text[]) OR c.assigned_agent ILIKE ANY($1::text[]))`;
+        conditions.push(`(c.assigned_agent = ANY($${pIdx}::text[]) OR c.assigned_agent ILIKE ANY($${pIdx}::text[]))`);
       }
       queryParams.push(hierarchy.allowedList);
+      pIdx++;
     }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const { rows: chats } = await connectDB.query(
       `SELECT 
@@ -111,7 +125,7 @@ export const getWhatsAppChats = async (req, res) => {
          l.tags AS lead_tags,
          l.notes AS lead_notes
        FROM public.whatsapp_chats c
-       ${hierarchyWhere}
+       ${whereClause}
        LEFT JOIN LATERAL (
          SELECT id, name, phone, email, company, source, value, stage, assigned, tags, notes
          FROM public.leads
@@ -133,7 +147,7 @@ export const getWhatsAppChats = async (req, res) => {
     ).catch(async (err) => {
       console.warn("Lateral join error, falling back to simple query:", err.message);
       return await connectDB.query(
-        `SELECT * FROM public.whatsapp_chats c ${hierarchyWhere} ORDER BY last_message_time DESC NULLS LAST`,
+        `SELECT * FROM public.whatsapp_chats c ${whereClause} ORDER BY last_message_time DESC NULLS LAST`,
         queryParams
       );
     });
@@ -171,17 +185,31 @@ export const getWhatsAppChats = async (req, res) => {
 
 export const getWhatsAppStats = async (req, res) => {
   try {
-    const hierarchy = await getHierarchyAllowedAssignees(req.user);
-    let hierarchyWhere = '';
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+    const conditions = [];
     const statsParams = [];
+    let pIdx = 1;
+
+    if (companyId) {
+      conditions.push(`company_id::text = $${pIdx}`);
+      statsParams.push(String(companyId));
+      pIdx++;
+    } else {
+      conditions.push(`1=0`);
+    }
+
+    const hierarchy = await getHierarchyAllowedAssignees(req.user);
     if (hierarchy && hierarchy.allowedList && hierarchy.allowedList.length > 0) {
       if (hierarchy.isManager) {
-        hierarchyWhere = `WHERE (assigned_agent = ANY($1::text[]) OR assigned_agent ILIKE ANY($1::text[]) OR assigned_agent IS NULL OR TRIM(assigned_agent) = '' OR assigned_agent = 'Unassigned')`;
+        conditions.push(`(assigned_agent = ANY($${pIdx}::text[]) OR assigned_agent ILIKE ANY($${pIdx}::text[]) OR assigned_agent IS NULL OR TRIM(assigned_agent) = '' OR assigned_agent = 'Unassigned')`);
       } else {
-        hierarchyWhere = `WHERE (assigned_agent = ANY($1::text[]) OR assigned_agent ILIKE ANY($1::text[]))`;
+        conditions.push(`(assigned_agent = ANY($${pIdx}::text[]) OR assigned_agent ILIKE ANY($${pIdx}::text[]))`);
       }
       statsParams.push(hierarchy.allowedList);
+      pIdx++;
     }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const { rows } = await connectDB.query(`
       SELECT
@@ -190,7 +218,7 @@ export const getWhatsAppStats = async (req, res) => {
         COUNT(*) FILTER (WHERE stage IN ('Closed Won', 'Resolved'))::int AS resolved,
         COUNT(*) FILTER (WHERE status = 'active')::int AS active
       FROM public.whatsapp_chats
-      ${hierarchyWhere}
+      ${whereClause}
     `, statsParams);
     const s = rows[0] || { total: 0, unread: 0, resolved: 0, active: 0 };
     return res.status(200).json({
@@ -212,6 +240,18 @@ export const getWhatsAppStats = async (req, res) => {
 export const getMessagesByChatId = async (req, res) => {
   try {
     const { chatId } = req.params;
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+
+    if (companyId) {
+      const checkChat = await connectDB.query(
+        `SELECT id FROM public.whatsapp_chats WHERE id::text = $1 AND (company_id::text = $2 OR company_id IS NULL)`,
+        [chatId, String(companyId)]
+      );
+      if (checkChat.rows.length === 0) {
+        return res.status(403).json({ success: false, message: 'Unauthorized: Chat belongs to another company' });
+      }
+    }
+
     const { rows } = await connectDB.query(
       `SELECT * FROM public.whatsapp_messages WHERE chat_id::text = $1 ORDER BY timestamp ASC`,
       [chatId]
@@ -463,25 +503,32 @@ export const createChat = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Contact name is required' });
     }
 
-    // Check if a chat already exists for this lead_id or matching phone
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.body?.company_id || null;
+
+    // Check if a chat already exists for this lead_id or matching phone within the company
     let existingChat = null;
     if (lead_id) {
-      const { rows } = await connectDB.query(
-        `SELECT * FROM public.whatsapp_chats WHERE lead_id::text = $1 LIMIT 1`,
-        [String(lead_id)]
-      ).catch(() => ({ rows: [] }));
+      let q = `SELECT * FROM public.whatsapp_chats WHERE lead_id::text = $1`;
+      const p = [String(lead_id)];
+      if (companyId) {
+        q += ` AND company_id::text = $2`;
+        p.push(String(companyId));
+      }
+      const { rows } = await connectDB.query(q, p).catch(() => ({ rows: [] }));
       if (rows.length > 0) existingChat = rows[0];
     }
 
     if (!existingChat && phone) {
       const cleanPhone = phone.replace(/\D/g, '').slice(-10);
       if (cleanPhone) {
-        const { rows } = await connectDB.query(
-          `SELECT * FROM public.whatsapp_chats 
-           WHERE right(regexp_replace(phone, '[^0-9]', '', 'g'), 10) = $1 
-           LIMIT 1`,
-          [cleanPhone]
-        ).catch(() => ({ rows: [] }));
+        let q = `SELECT * FROM public.whatsapp_chats WHERE right(regexp_replace(phone, '[^0-9]', '', 'g'), 10) = $1`;
+        const p = [cleanPhone];
+        if (companyId) {
+          q += ` AND company_id::text = $2`;
+          p.push(String(companyId));
+        }
+        q += ` LIMIT 1`;
+        const { rows } = await connectDB.query(q, p).catch(() => ({ rows: [] }));
         if (rows.length > 0) existingChat = rows[0];
       }
     }
@@ -499,8 +546,8 @@ export const createChat = async (req, res) => {
     }
 
     const { rows } = await connectDB.query(
-      `INSERT INTO public.whatsapp_chats (contact_name, phone, avatar, assigned_agent, assigned_agent_id, stage, lead_id, deal_value, last_message, last_message_time)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW()) RETURNING *`,
+      `INSERT INTO public.whatsapp_chats (contact_name, phone, avatar, assigned_agent, assigned_agent_id, stage, lead_id, deal_value, last_message, last_message_time, company_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), $10) RETURNING *`,
       [
         contact_name.trim(),
         phone || '',
@@ -511,6 +558,7 @@ export const createChat = async (req, res) => {
         lead_id ? String(lead_id) : null,
         deal_value || '₹0',
         initial_message || 'Chat started',
+        companyId ? String(companyId) : null,
       ]
     );
 

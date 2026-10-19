@@ -230,9 +230,23 @@ export const updateCompany = async (req, res) => {
 // ─────────────────────────────────────────────
 export const getAllCompanies = async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT * FROM companies ORDER BY created_at DESC`
-    );
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id;
+    const isSuperAdmin = req.role === 'superadmin' || req.user?.role === 'superadmin' || req.role === 'SUPER_ADMIN';
+
+    let query = `SELECT * FROM companies`;
+    const params = [];
+
+    if (!isSuperAdmin) {
+      if (!companyId) {
+        return res.json({ success: true, data: [] });
+      }
+      query += ` WHERE id = $1`;
+      params.push(companyId);
+    }
+
+    query += ` ORDER BY created_at DESC`;
+
+    const result = await pool.query(query, params);
 
     res.json({
       success: true,
@@ -252,7 +266,14 @@ export const getAllCompanies = async (req, res) => {
 // ─────────────────────────────────────────────
 export const getCompanyById = async (req, res) => {
   try {
-    const id = req.user.company_id;
+    const id = req.user?.company_id || req.user?.companyId || req.company_id;
+    if (!id) {
+      return res.status(200).json({
+        success: true,
+        data: null,
+        message: "Company profile not found"
+      });
+    }
 
     const result = await pool.query(
       `SELECT * FROM companies WHERE id = $1`,
@@ -286,6 +307,12 @@ export const getCompanyById = async (req, res) => {
 export const deleteCompany = async (req, res) => {
   try {
     const { id } = req.params;
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id;
+    const isSuperAdmin = req.role === 'superadmin' || req.user?.role === 'superadmin' || req.role === 'SUPER_ADMIN';
+
+    if (!isSuperAdmin && String(id) !== String(companyId)) {
+      return res.status(403).json({ success: false, message: 'Forbidden: You cannot delete another company profile' });
+    }
 
     const result = await pool.query(
       `DELETE FROM companies WHERE id = $1 RETURNING *`,

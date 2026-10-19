@@ -119,9 +119,10 @@ export const createBranch = async (req, res) => {
       if (dupCode.rows.length) return fail(res, 409, "A branch with this code already exists");
     }
 
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.body?.company_id || null;
     const inserted = await pool.query(
-      `INSERT INTO branches (name, code, city, state, address, phone, is_active)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
+      `INSERT INTO branches (name, code, city, state, address, phone, is_active, company_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
        RETURNING id`,
       [
         values.name,
@@ -131,6 +132,7 @@ export const createBranch = async (req, res) => {
         values.address || null,
         values.phone || null,
         values.isActive !== false,
+        companyId ? String(companyId) : null,
       ]
     );
 
@@ -159,6 +161,14 @@ export const getBranches = async (req, res) => {
 
     const filters = [];
     const params = [];
+
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+    if (companyId) {
+      params.push(String(companyId));
+      filters.push(`b.company_id::text = $${params.length}`);
+    } else {
+      filters.push(`1=0`);
+    }
 
     if (String(search).trim()) {
       params.push(`%${String(search).trim()}%`);

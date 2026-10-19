@@ -39,8 +39,11 @@ import {
   // Usage
   recordUsageEndpoint,
 } from './knowledge-base-controller.js';
+import { verifyToken } from '../../middlewares/verifyToken.middleware.js';
 
 const router = express.Router();
+
+router.use(verifyToken);
 
 // Memory storage for CSV file uploads
 const upload = multer({

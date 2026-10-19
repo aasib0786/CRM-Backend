@@ -629,7 +629,7 @@ export const getDashboardSummary = async (req, res) => {
     res.set('Expires', '0');
 
     // FIX: require company_id from auth token — original had no company scoping
-    const company_id = req.user?.company_id;
+    const company_id = req.user?.company_id || req.user?.companyId || req.company_id;
     if (!company_id) {
       return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
@@ -885,7 +885,7 @@ export const getSalesTrend = async (req, res) => {
     res.set('Expires', '0');
 
     // FIX: added company_id + warehouse scoping (was completely missing)
-    const company_id = req.user?.company_id;
+    const company_id = req.user?.company_id || req.user?.companyId || req.company_id;
     if (!company_id) {
       return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
@@ -968,7 +968,7 @@ export const getLowStockItems = async (req, res) => {
 
     // FIX: use company_id from token consistently (was using req.user?.company_id
     // but then passing it as a nullable cast — simplified)
-    const company_id = req.user?.company_id;
+    const company_id = req.user?.company_id || req.user?.companyId || req.company_id;
     if (!company_id) {
       return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
@@ -1037,7 +1037,7 @@ export const getTopSellingItems = async (req, res) => {
     res.set('Expires', '0');
 
     // FIX: company_id filter was completely missing — returned all companies' data
-    const company_id = req.user?.company_id;
+    const company_id = req.user?.company_id || req.user?.companyId || req.company_id;
     if (!company_id) {
       return res.status(401).json({ success: false, message: 'Unauthorized' });
     }

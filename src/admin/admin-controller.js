@@ -424,6 +424,8 @@ export const getAllUsers = async (req, res) => {
       conditions.push(`u.company_id = $${idx}`);
       values.push(companyId);
       idx++;
+    } else {
+      conditions.push(`1=0`);
     }
 
     if (search) {

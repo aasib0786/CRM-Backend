@@ -146,8 +146,20 @@ export const initDb = async () => {
       );
 
       ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS meta JSONB DEFAULT '{}'::jsonb;
-      ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS company_id VARCHAR(100) DEFAULT 'default';
+      ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS company_id VARCHAR(100);
       ALTER TABLE public.notifications ADD COLUMN IF NOT EXISTS activity_id VARCHAR(100);
+      ALTER TABLE public.notifications ADD COLUMN IF NOT EXISTS company_id VARCHAR(100);
+      ALTER TABLE public.calls ADD COLUMN IF NOT EXISTS company_id UUID;
+      ALTER TABLE public.scheduled_calls ADD COLUMN IF NOT EXISTS company_id UUID;
+      ALTER TABLE public.activities ADD COLUMN IF NOT EXISTS company_id UUID;
+      ALTER TABLE public.campaigns ADD COLUMN IF NOT EXISTS company_id UUID;
+      ALTER TABLE public.quotations ADD COLUMN IF NOT EXISTS company_id UUID;
+      ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS company_id VARCHAR(100);
+      ALTER TABLE public.teams ADD COLUMN IF NOT EXISTS company_id UUID;
+      ALTER TABLE public.branches ADD COLUMN IF NOT EXISTS company_id UUID;
+      ALTER TABLE public.whatsapp_chats ADD COLUMN IF NOT EXISTS company_id UUID;
+      ALTER TABLE public.lead_capture_forms ADD COLUMN IF NOT EXISTS company_id UUID;
+      ALTER TABLE public.quotation_templates ADD COLUMN IF NOT EXISTS company_id UUID;
     `);
 
     // Fix legacy column types if present
@@ -1869,6 +1881,23 @@ export const initDb = async () => {
       await initWorkflowsDb();
     } catch (wfErr) {
       console.error("Error initializing Workflows DB:", wfErr.message);
+    }
+
+    // Multi-tenant company_id auto-migration safeguard across all CRM modules
+    try {
+      const multiTenantTables = [
+        'leads', 'calls', 'scheduled_calls', 'quotations', 'campaigns', 'activities',
+        'notifications', 'whatsapp_chats', 'projects', 'teams', 'branches',
+        'lead_capture_forms', 'lead_capture_submissions', 'integrations',
+        'pipeline_stages', 'lead_sources', 'whatsapp_templates', 'whatsapp_quick_replies',
+        'lead_scoring_config', 'assignment_rules_config', 'ai_agent_settings', 'ai_bot_settings',
+        'kb_categories', 'kb_articles', 'workflows', 'workflow_runs'
+      ];
+      for (const t of multiTenantTables) {
+        await connectDB.query(`ALTER TABLE IF EXISTS public.${t} ADD COLUMN IF NOT EXISTS company_id UUID;`).catch(() => {});
+      }
+    } catch (mtErr) {
+      console.warn("Notice during multi-tenant column check:", mtErr.message);
     }
 
     console.log("✅ All CRM Database Tables Initialized Successfully!");

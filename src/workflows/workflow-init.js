@@ -45,6 +45,8 @@ export async function initWorkflowsDb() {
       ALTER TABLE public.workflows ADD COLUMN IF NOT EXISTS steps JSONB DEFAULT '[]'::jsonb;
       ALTER TABLE public.workflows ADD COLUMN IF NOT EXISTS allow_reentry BOOLEAN DEFAULT false;
       ALTER TABLE public.workflows ADD COLUMN IF NOT EXISTS stop_on_reply BOOLEAN DEFAULT true;
+      ALTER TABLE public.workflows ADD COLUMN IF NOT EXISTS stop_on_agent_takeover BOOLEAN DEFAULT true;
+      ALTER TABLE public.workflows ADD COLUMN IF NOT EXISTS stop_on_stage_change BOOLEAN DEFAULT true;
       ALTER TABLE public.workflows ADD COLUMN IF NOT EXISTS created_by UUID;
       ALTER TABLE public.workflows ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
       ALTER TABLE public.workflows ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
@@ -97,6 +99,8 @@ export async function initWorkflowsDb() {
     // 4. Ensure leads opt-out column
     await connectDB.query(`
       ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS do_not_message BOOLEAN DEFAULT false;
+    `);
+
     console.log('✅ Workflows database tables, indexes and constraints initialized successfully.');
 
     // Seed default demo workflows for existing companies if empty

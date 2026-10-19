@@ -12,12 +12,20 @@ import { emitManualTrigger } from './workflow-events.js';
  * Resolves the authenticated company ID from request or database fallback
  */
 async function getCompanyId(req) {
-  let compId = req.company_id || req.user?.company_id || req.query?.company_id || req.headers?.['x-company-id'];
-  if (!compId) {
-    const { rows } = await connectDB.query(`SELECT id FROM public.companies LIMIT 1`);
-    compId = rows[0]?.id || '00000000-0000-0000-0000-000000000001';
+  let compId = req.company_id || req.user?.company_id || req.user?.companyId || req.query?.company_id || req.headers?.['x-company-id'];
+  if (!compId && (req.user?.id || req.user?.email)) {
+    try {
+      const uRes = await connectDB.query(
+        `SELECT company_id FROM public.users WHERE id::text = $1 OR LOWER(email) = LOWER($2) LIMIT 1`,
+        [String(req.user.id || ''), String(req.user.email || '').trim()]
+      );
+      if (uRes.rows.length > 0 && uRes.rows[0].company_id) {
+        compId = uRes.rows[0].company_id;
+        req.company_id = compId;
+      }
+    } catch (e) {}
   }
-  return compId;
+  return compId || null;
 }
 
 /**
@@ -27,6 +35,9 @@ async function getCompanyId(req) {
 export const getWorkflows = async (req, res) => {
   try {
     const companyId = await getCompanyId(req);
+    if (!companyId) {
+      return res.status(200).json({ success: true, count: 0, data: [] });
+    }
 
     const { rows } = await connectDB.query(
       `SELECT 

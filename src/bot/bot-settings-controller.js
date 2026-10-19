@@ -10,19 +10,26 @@ import path from 'path';
 export const resolveCompanyId = async (req) => {
   if (req.company_id) return req.company_id;
   if (req.user?.company_id) return req.user.company_id;
-  if (req.user?.id) return req.user.id;
+  if (req.user?.companyId) return req.user.companyId;
+  if (req.headers?.['x-company-id']) return req.headers['x-company-id'];
   if (req.query?.company_id) return req.query.company_id;
   if (req.body?.company_id) return req.body.company_id;
 
-  // Safe fallback to first registered company in DB
-  try {
-    const { rows } = await connectDB.query(`SELECT id FROM public.companies LIMIT 1`);
-    if (rows.length > 0 && rows[0].id) {
-      return rows[0].id;
-    }
-  } catch (e) {}
+  // Resolve from user record if user is authenticated
+  if (req.user?.id || req.user?.email) {
+    try {
+      const uRes = await connectDB.query(
+        `SELECT company_id FROM public.users WHERE id::text = $1 OR LOWER(email) = LOWER($2) LIMIT 1`,
+        [String(req.user.id || ''), String(req.user.email || '').trim()]
+      );
+      if (uRes.rows.length > 0 && uRes.rows[0].company_id) {
+        req.company_id = uRes.rows[0].company_id;
+        return uRes.rows[0].company_id;
+      }
+    } catch (e) {}
+  }
 
-  return '00000000-0000-0000-0000-000000000000';
+  return null;
 };
 
 /**

@@ -27,7 +27,7 @@ const optionalAuth = (req, res, next) => {
       const decoded = jwt.decode(token);
       if (decoded) {
         req.user = decoded;
-        req.company_id = decoded.company_id;
+        req.company_id = decoded.company_id || decoded.companyId;
       }
     }
   } catch (e) {}

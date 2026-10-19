@@ -82,7 +82,14 @@ const ensureSeedLeadForms = async () => {
 export const getLeadCaptureForms = async (req, res) => {
   try {
     await ensureSeedLeadForms();
-    const { rows } = await connectDB.query(`SELECT * FROM public.lead_capture_forms ORDER BY created_at DESC`);
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+    if (!companyId) {
+      return res.status(200).json({ success: true, count: 0, data: [] });
+    }
+    const { rows } = await connectDB.query(
+      `SELECT * FROM public.lead_capture_forms WHERE (company_id::text = $1 OR company_id IS NULL) ORDER BY created_at DESC`,
+      [String(companyId)]
+    );
     return res.status(200).json({ success: true, count: rows.length, data: rows });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
@@ -103,6 +110,7 @@ export const getFormById = async (req, res) => {
 
 export const createLeadCaptureForm = async (req, res) => {
   try {
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'] || null;
     const {
       title,
       description,
@@ -117,9 +125,9 @@ export const createLeadCaptureForm = async (req, res) => {
     const { rows } = await connectDB.query(
       `INSERT INTO public.lead_capture_forms (
         title, description, fields, redirect_url, status,
-        submit_button_text, success_message, privacy_policy_checkbox, project_id
+        submit_button_text, success_message, privacy_policy_checkbox, project_id, company_id
       )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
       [
         title || 'New Web Form',
         description || null,
@@ -129,7 +137,8 @@ export const createLeadCaptureForm = async (req, res) => {
         submit_button_text || 'Submit Inquiry',
         success_message || "Thank you! We'll contact you shortly.",
         privacy_policy_checkbox !== false,
-        project_id || null
+        project_id || null,
+        companyId
       ]
     );
 
@@ -142,6 +151,7 @@ export const createLeadCaptureForm = async (req, res) => {
       userName: req.user?.name || 'Admin',
       action: 'created web form',
       leadName: created.title,
+      companyId: companyId,
       detail: `Status: ${created.status} • Fields: ${Array.isArray(fields) ? fields.length : 0}`,
     });
 
@@ -154,6 +164,7 @@ export const createLeadCaptureForm = async (req, res) => {
 export const updateLeadCaptureForm = async (req, res) => {
   try {
     const { id } = req.params;
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
     const {
       title,
       description,
@@ -177,7 +188,7 @@ export const updateLeadCaptureForm = async (req, res) => {
         success_message = COALESCE($7, success_message),
         privacy_policy_checkbox = COALESCE($8, privacy_policy_checkbox),
         project_id = COALESCE($9, project_id)
-       WHERE id = $10 RETURNING *`,
+       WHERE id = $10 ${companyId ? 'AND (company_id::text = $11 OR company_id IS NULL)' : ''} RETURNING *`,
       [
         title !== undefined ? title : null,
         description !== undefined ? description : null,
@@ -188,7 +199,8 @@ export const updateLeadCaptureForm = async (req, res) => {
         success_message !== undefined ? success_message : null,
         privacy_policy_checkbox !== undefined ? privacy_policy_checkbox : null,
         project_id !== undefined ? project_id : null,
-        id
+        id,
+        ...(companyId ? [String(companyId)] : [])
       ]
     );
     if (!rows.length) return res.status(404).json({ success: false, message: 'Form not found' });
@@ -201,6 +213,7 @@ export const updateLeadCaptureForm = async (req, res) => {
       userName: req.user?.name || 'Admin',
       action: 'updated web form',
       leadName: updated.title,
+      companyId: companyId,
       detail: `Status: ${updated.status}`,
     });
 
@@ -213,10 +226,20 @@ export const updateLeadCaptureForm = async (req, res) => {
 export const deleteLeadCaptureForm = async (req, res) => {
   try {
     const { id } = req.params;
-    const fRes = await connectDB.query(`SELECT title FROM public.lead_capture_forms WHERE id = $1`, [id]);
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+    const fRes = await connectDB.query(
+      `SELECT title, company_id FROM public.lead_capture_forms WHERE id = $1 ${companyId ? 'AND (company_id::text = $2 OR company_id IS NULL)' : ''}`,
+      companyId ? [id, String(companyId)] : [id]
+    );
+    if (!fRes.rows.length) {
+      return res.status(404).json({ success: false, message: 'Form not found' });
+    }
     const formTitle = fRes.rows[0]?.title || 'Form';
 
-    await connectDB.query(`DELETE FROM public.lead_capture_forms WHERE id = $1`, [id]);
+    await connectDB.query(
+      `DELETE FROM public.lead_capture_forms WHERE id = $1 ${companyId ? 'AND (company_id::text = $2 OR company_id IS NULL)' : ''}`,
+      companyId ? [id, String(companyId)] : [id]
+    );
 
     await logActivity({
       type: 'lead_form_deleted',
@@ -225,6 +248,7 @@ export const deleteLeadCaptureForm = async (req, res) => {
       userName: req.user?.name || 'Admin',
       action: 'deleted web form',
       leadName: formTitle,
+      companyId: companyId,
       detail: `Form "${formTitle}" removed`,
     });
 
@@ -244,13 +268,14 @@ export const submitLeadForm = async (req, res) => {
     const formRes = await connectDB.query(`SELECT * FROM public.lead_capture_forms WHERE id = $1`, [form_id]);
     const formRow = formRes.rows.length ? formRes.rows[0] : null;
     const formTitle = formRow ? formRow.title : 'Web Form';
+    const formCompanyId = formRow?.company_id || null;
 
     const submissionData = data || {};
 
     const { rows } = await connectDB.query(
-      `INSERT INTO public.lead_capture_submissions (form_id, form_title, data)
-       VALUES ($1, $2, $3) RETURNING *`,
-      [form_id, formTitle, JSON.stringify(submissionData)]
+      `INSERT INTO public.lead_capture_submissions (form_id, form_title, data, company_id)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [form_id, formTitle, JSON.stringify(submissionData), formCompanyId]
     );
 
     // Smartly extract field values for lead creation
@@ -286,12 +311,12 @@ export const submitLeadForm = async (req, res) => {
       ALTER TABLE IF EXISTS public.leads ALTER COLUMN company SET DEFAULT '';
     `).catch(() => {});
 
-    // Try rich lead insert with full details
+    // Try rich lead insert with full details and company_id
     try {
       await connectDB.query(
         `INSERT INTO public.leads (
-          name, email, phone, company, source, stage, priority, notes, custom_fields, extra_fields, project_id, score, last_activity, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW(), NOW())`,
+          name, email, phone, company, source, stage, priority, notes, custom_fields, extra_fields, project_id, score, company_id, last_activity, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW(), NOW())`,
         [
           leadName,
           leadEmail,
@@ -304,16 +329,17 @@ export const submitLeadForm = async (req, res) => {
           JSON.stringify(submissionData),
           JSON.stringify(submissionData),
           formRow?.project_id ? String(formRow.project_id) : null,
-          leadEmail && leadPhone ? 80 : 65
+          leadEmail && leadPhone ? 80 : 65,
+          formCompanyId
         ]
       );
     } catch (insertErr) {
       console.warn('Rich lead insert fallback:', insertErr.message);
       // Fallback standard insert ensuring company is always a non-null string
       await connectDB.query(
-        `INSERT INTO public.leads (name, email, phone, company, source, stage)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [leadName, leadEmail, leadPhone, leadCompany, `Web Form: ${formTitle}`, 'New Inquiry']
+        `INSERT INTO public.leads (name, email, phone, company, source, stage, company_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [leadName, leadEmail, leadPhone, leadCompany, `Web Form: ${formTitle}`, 'New Inquiry', formCompanyId]
       );
     }
 
@@ -330,6 +356,7 @@ export const submitLeadForm = async (req, res) => {
       userName: 'Web Visitor',
       action: 'submitted web form',
       leadName: leadName,
+      companyId: formCompanyId,
       detail: `Form: ${formTitle} • Phone: ${leadPhone || 'N/A'} • Email: ${leadEmail || 'N/A'}${leadCompany && leadCompany !== 'Individual' ? ` • Company: ${leadCompany}` : ''}`,
     });
 
@@ -348,10 +375,22 @@ export const submitLeadForm = async (req, res) => {
 export const getSubmissionsByFormId = async (req, res) => {
   try {
     const { formId } = req.params;
-    const { rows } = await connectDB.query(
-      `SELECT * FROM public.lead_capture_submissions WHERE form_id = $1 ORDER BY created_at DESC`,
-      [formId]
-    );
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+    
+    // Ensure form belongs to company if companyId is present
+    let query = `
+      SELECT s.* FROM public.lead_capture_submissions s
+      LEFT JOIN public.lead_capture_forms f ON f.id = s.form_id
+      WHERE s.form_id = $1
+    `;
+    const params = [formId];
+    if (companyId) {
+      query += ` AND (f.company_id::text = $2 OR f.company_id IS NULL OR s.company_id::text = $2)`;
+      params.push(String(companyId));
+    }
+    query += ` ORDER BY s.created_at DESC`;
+
+    const { rows } = await connectDB.query(query, params);
     return res.status(200).json({ success: true, count: rows.length, data: rows });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });

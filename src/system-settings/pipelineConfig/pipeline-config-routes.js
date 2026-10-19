@@ -18,11 +18,20 @@ const router = Router();
 const optionalAuth = (req, res, next) => {
     try {
         const authHeader = req.headers.authorization;
+        let token = null;
         if (authHeader?.startsWith("Bearer ")) {
-            const token = authHeader.split(" ")[1]?.trim();
-            if (token && token !== "null" && token !== "undefined") {
-                const decoded = jwt.decode(token);
-                if (decoded) req.user = decoded;
+            token = authHeader.split(" ")[1]?.trim();
+        } else if (req.cookies?.token) {
+            token = req.cookies.token?.trim();
+        } else if (req.cookies?.accessToken) {
+            token = req.cookies.accessToken?.trim();
+        }
+        if (token && token !== "null" && token !== "undefined") {
+            if (token.startsWith('"') && token.endsWith('"')) token = token.slice(1, -1);
+            const decoded = jwt.decode(token);
+            if (decoded) {
+                req.user = decoded;
+                req.company_id = decoded.company_id || decoded.companyId;
             }
         }
     } catch (e) {}

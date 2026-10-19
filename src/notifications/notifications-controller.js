@@ -2,23 +2,35 @@ import connectDB from '../pool.js';
 
 export const getNotifications = async (req, res) => {
   try {
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+    let whereClause = '';
+    const params = [];
+    if (companyId) {
+      params.push(String(companyId));
+      whereClause = `WHERE n.company_id::text = $1`;
+    } else {
+      whereClause = `WHERE 1=0`;
+    }
+
     const result = await connectDB.query(`
       SELECT 
         n.*,
         (n.scheduled_at <= NOW()) AS is_due
       FROM public.notifications n
+      ${whereClause}
       ORDER BY 
         CASE WHEN n.scheduled_at <= NOW() THEN 0 ELSE 1 END,
         n.scheduled_at DESC,
         n.created_at DESC
       LIMIT 50
-    `);
+    `, params);
 
+    const unreadClause = companyId ? `WHERE read = false AND scheduled_at <= NOW() AND company_id::text = $1` : `WHERE 1=0`;
     const unreadResult = await connectDB.query(`
       SELECT COUNT(*)::int AS unread_count
       FROM public.notifications
-      WHERE read = false AND scheduled_at <= NOW()
-    `);
+      ${unreadClause}
+    `, params);
 
     const unreadCount = unreadResult.rows[0]?.unread_count || 0;
 

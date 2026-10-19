@@ -38,6 +38,8 @@ export const logActivity = async ({
   timeBlock = '',
   timestamp = new Date(),
   metadata = {},
+  companyId = null,
+  company_id = null,
 }) => {
   try {
     const ts = timestamp instanceof Date ? timestamp : new Date(timestamp || Date.now());
@@ -45,6 +47,16 @@ export const logActivity = async ({
     const finalInitials = userInitials || getInitials(finalAgent);
     const finalBlock = timeBlock || getTimeBlock(ts);
     const finalDetail = detail || description || title || '';
+
+    let finalCompanyId = companyId || company_id || null;
+    if (!finalCompanyId && leadId) {
+      try {
+        const leadRes = await connectDB.query(`SELECT company_id FROM public.leads WHERE id::text = $1 LIMIT 1`, [String(leadId)]);
+        if (leadRes.rows[0]?.company_id) {
+          finalCompanyId = leadRes.rows[0].company_id;
+        }
+      } catch {}
+    }
 
     let normalizedType = (type || 'note').toLowerCase().replace(/\s+/g, '_');
     if (normalizedType === 'stage_changed') normalizedType = 'stage_change';
@@ -94,8 +106,8 @@ export const logActivity = async ({
     const { rows } = await connectDB.query(
       `INSERT INTO public.activities (
         type, title, description, user_name, user_initials,
-        action, lead_name, lead_id, detail, time_block, timestamp, metadata
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        action, lead_name, lead_id, detail, time_block, timestamp, metadata, company_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING *`,
       [
         normalizedType,
@@ -110,6 +122,7 @@ export const logActivity = async ({
         finalBlock,
         ts,
         JSON.stringify(metadata || {}),
+        finalCompanyId ? String(finalCompanyId) : null,
       ]
     );
 

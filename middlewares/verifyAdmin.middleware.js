@@ -9,7 +9,8 @@ export const verifyAdmin = (requiredRole) => {
         return res.status(401).json({ message: "Unauthorized you are not logged In" });
       }
 
-      const decoded = req.user || jwt.verify(token, process.env.JWT_SECRET_KEY);
+      const secret = process.env.JWT_SECRET_KEY || process.env.JWT_SECRET || "abcd1234sjkynqoinkerhkaw";
+      const decoded = req.user || jwt.verify(token, secret);
       if (!decoded.role) {
         next();
         return;

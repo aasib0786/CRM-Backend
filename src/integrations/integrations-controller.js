@@ -3,7 +3,13 @@ import connectDB from '../pool.js';
 
 export const getIntegrations = async (req, res) => {
   try {
-    const { rows } = await connectDB.query(`SELECT * FROM public.integrations ORDER BY name ASC`);
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+    const query = companyId
+      ? `SELECT * FROM public.integrations WHERE (company_id::text = $1 OR company_id IS NULL) ORDER BY name ASC`
+      : `SELECT * FROM public.integrations WHERE company_id IS NULL ORDER BY name ASC`;
+    const params = companyId ? [String(companyId)] : [];
+
+    const { rows } = await connectDB.query(query, params);
     return res.status(200).json({ success: true, count: rows.length, data: rows });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
@@ -14,15 +20,17 @@ export const updateIntegration = async (req, res) => {
   try {
     const { key } = req.params;
     const { status, config } = req.body;
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'] || null;
+
     const { rows } = await connectDB.query(
-      `INSERT INTO public.integrations (key, name, status, config, connected_at)
-       VALUES ($1, $1, $2, $3, NOW())
-       ON CONFLICT (key) DO UPDATE SET
+      `INSERT INTO public.integrations (key, name, status, config, connected_at, company_id)
+       VALUES ($1, $1, $2, $3, NOW(), $4)
+       ON CONFLICT (company_id, key) DO UPDATE SET
         status = EXCLUDED.status,
         config = EXCLUDED.config,
         connected_at = NOW()
        RETURNING *`,
-      [key, status || 'Connected', JSON.stringify(config || {})]
+      [key, status || 'Connected', JSON.stringify(config || {}), companyId]
     );
     return res.status(200).json({ success: true, data: rows[0] });
   } catch (err) {
@@ -72,7 +80,11 @@ export const createFormAccount = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Account name required' });
     }
 
-    const companyId = req.user?.company_id || req.user?.id || 'default';
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+    if (!companyId) {
+      return res.status(401).json({ success: false, message: 'Company ID required' });
+    }
+
     const userId = req.user?.id || null;
     const webhookKey = 'wf_' + crypto.randomBytes(20).toString('hex');
 
@@ -104,31 +116,29 @@ export const createFormAccount = async (req, res) => {
 
 export const getFormAccounts = async (req, res) => {
   try {
-    const companyId = req.user?.company_id || req.user?.id;
-    let query = `
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+    if (!companyId) {
+      return res.status(200).json({ success: true, count: 0, data: [], items: [] });
+    }
+
+    const query = `
       SELECT a.*,
         COALESCE(
           a.last_received_at,
-          (SELECT MAX(created_at) FROM public.leads WHERE source = 'Website Form')
+          (SELECT MAX(created_at) FROM public.leads WHERE source = 'Website Form' AND company_id::text = $1)
         ) AS last_received_at,
         COALESCE((
           SELECT COUNT(*)::int FROM public.leads l 
           WHERE (l.meta->>'integration_account_id' = a.id::text OR l.source = 'Website Form')
             AND (l.created_at::date = CURRENT_DATE OR l.created_at >= NOW() - INTERVAL '24 hours')
+            AND l.company_id::text = $1
         ), 0) AS leads_today
       FROM public.integration_accounts a
-      WHERE a.provider = 'website_forms'
+      WHERE a.provider = 'website_forms' AND a.company_id::text = $1
+      ORDER BY a.created_at DESC
     `;
-    const values = [];
 
-    if (companyId) {
-      query += ` AND (a.company_id = $1 OR a.company_id = 'default' OR a.company_id IS NULL)`;
-      values.push(String(companyId));
-    }
-
-    query += ` ORDER BY a.created_at DESC`;
-
-    const { rows } = await connectDB.query(query, values);
+    const { rows } = await connectDB.query(query, [String(companyId)]);
     const baseUrl = process.env.API_PUBLIC_URL || process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`;
 
     const items = rows.map((acc) => {
@@ -156,7 +166,12 @@ export const getFormAccounts = async (req, res) => {
 export const deleteFormAccount = async (req, res) => {
   try {
     const { id } = req.params;
-    await connectDB.query(`DELETE FROM public.integration_accounts WHERE id = $1`, [id]);
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+    
+    await connectDB.query(
+      `DELETE FROM public.integration_accounts WHERE id = $1 ${companyId ? 'AND company_id::text = $2' : ''}`,
+      companyId ? [id, String(companyId)] : [id]
+    );
     return res.status(200).json({ success: true, message: 'Account deleted successfully' });
   } catch (err) {
     console.error('deleteFormAccount error:', err);

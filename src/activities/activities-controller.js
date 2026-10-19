@@ -137,6 +137,8 @@ export const getActivities = async (req, res) => {
     if (companyId) {
       params.push(companyId);
       query += ` AND company_id = $${params.length}`;
+    } else {
+      query += ` AND 1=0`;
     }
 
     // Date filter: if specific date provided (YYYY-MM-DD)

@@ -164,8 +164,17 @@ const ensureSeedCampaigns = async () => {
 
 export const getCampaigns = async (req, res) => {
   try {
-    await ensureSeedCampaigns();
-    const { rows } = await connectDB.query(`SELECT * FROM public.campaigns ORDER BY created_at DESC`);
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+    let query = `SELECT * FROM public.campaigns`;
+    const params = [];
+    if (companyId) {
+      query += ` WHERE company_id::text = $1`;
+      params.push(String(companyId));
+    } else {
+      query += ` WHERE 1=0`;
+    }
+    query += ` ORDER BY created_at DESC`;
+    const { rows } = await connectDB.query(query, params);
 
     const total = rows.length;
     const active = rows.filter((c) => c.status === "Active").length;
@@ -278,9 +287,10 @@ export const createCampaign = async (req, res) => {
     const openRate = campaignStatus === 'Active' ? 68.5 : 0;
     const clickRate = campaignStatus === 'Active' ? 34.0 : 0;
 
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.body?.company_id || null;
     const { rows } = await connectDB.query(
-      `INSERT INTO public.campaigns (name, type, channel, status, target_audience, leads_count, sent_count, open_rate, click_rate, scheduled_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+      `INSERT INTO public.campaigns (name, type, channel, status, target_audience, leads_count, sent_count, open_rate, click_rate, scheduled_at, company_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
       [
         name || 'New Lead Campaign',
         type || 'Promotional',
@@ -292,6 +302,7 @@ export const createCampaign = async (req, res) => {
         openRate,
         clickRate,
         scheduled_at || null,
+        companyId ? String(companyId) : null,
       ]
     );
 

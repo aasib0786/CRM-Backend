@@ -68,13 +68,32 @@ export const isInterestedStage = (stage) => {
 
 export const getProjects = async (req, res) => {
   try {
-    const { rows: projects } = await connectDB.query(`SELECT * FROM public.projects ORDER BY created_at DESC NULLS LAST`);
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+    let pQuery = `SELECT * FROM public.projects`;
+    const pParams = [];
+    if (companyId) {
+      pParams.push(String(companyId));
+      pQuery += ` WHERE company_id = $1`;
+    } else {
+      pQuery += ` WHERE 1=0`;
+    }
+    pQuery += ` ORDER BY created_at DESC NULLS LAST`;
+
+    const { rows: projects } = await connectDB.query(pQuery, pParams);
 
     // Fetch all project inventory to compute dynamic counts per project
     const { rows: inventoryRows } = await connectDB.query(`SELECT id, project_id, data FROM public.project_inventory`);
 
-    // Fetch all leads to compute dynamic lead counts per project
-    const { rows: leadsRows } = await connectDB.query(`SELECT id, name, project_id, stage FROM public.leads`);
+    // Fetch all leads to compute dynamic lead counts per project (scoped to company)
+    let leadsQuery = `SELECT id, name, project_id, stage FROM public.leads`;
+    const lParams = [];
+    if (companyId) {
+      lParams.push(String(companyId));
+      leadsQuery += ` WHERE company_id::text = $1`;
+    } else {
+      leadsQuery += ` WHERE 1=0`;
+    }
+    const { rows: leadsRows } = await connectDB.query(leadsQuery, lParams);
 
     // Group inventory by project
     const inventoryByProj = {};
@@ -355,9 +374,10 @@ export const createProject = async (req, res) => {
     }
 
     const id = randomUUID();
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.body?.company_id || null;
     const { rows } = await connectDB.query(
-      `INSERT INTO public.projects (id, name, category, selling_type_id, status, color, description, custom_fields, client_name, lead_id, budget, spent, start_date, due_date, team_members, documents, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW()) RETURNING *`,
+      `INSERT INTO public.projects (id, name, category, selling_type_id, status, color, description, custom_fields, client_name, lead_id, budget, spent, start_date, due_date, team_members, documents, company_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW()) RETURNING *`,
       [
         id,
         name.trim(),
@@ -375,6 +395,7 @@ export const createProject = async (req, res) => {
         due_date || null,
         JSON.stringify(team_members),
         JSON.stringify(documents),
+        companyId ? String(companyId) : null,
       ]
     );
 

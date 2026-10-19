@@ -274,6 +274,8 @@ export const getLeads = async (req, res) => {
             conditions.push(`l.company_id::text = $${idx}`);
             values.push(String(companyId));
             idx++;
+        } else {
+            conditions.push(`1=0`);
         }
 
         // Team Hierarchy Access Control:
@@ -456,17 +458,31 @@ export const getLeadsStats = async (req, res) => {
         const warmT = thresholds.find((t) => t.id === 'warm') || { from: 41, to: 70 };
         const coldT = thresholds.find((t) => t.id === 'cold') || { from: 0, to: 40 };
 
-        const hierarchy = await getHierarchyAllowedAssignees(req.user);
-        let hierarchyFilter = '';
+        const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+        const conditions = [];
         const statsParams = [];
+        let pIdx = 1;
+
+        if (companyId) {
+            conditions.push(`company_id::text = $${pIdx}`);
+            statsParams.push(String(companyId));
+            pIdx++;
+        } else {
+            conditions.push(`1=0`);
+        }
+
+        const hierarchy = await getHierarchyAllowedAssignees(req.user);
         if (hierarchy && hierarchy.allowedList && hierarchy.allowedList.length > 0) {
             if (hierarchy.isManager) {
-                hierarchyFilter = `WHERE (assigned = ANY($1::text[]) OR assigned ILIKE ANY($1::text[]) OR assigned IS NULL OR TRIM(assigned) = '')`;
+                conditions.push(`(assigned = ANY($${pIdx}::text[]) OR assigned ILIKE ANY($${pIdx}::text[]) OR assigned IS NULL OR TRIM(assigned) = '')`);
             } else {
-                hierarchyFilter = `WHERE (assigned = ANY($1::text[]) OR assigned ILIKE ANY($1::text[]))`;
+                conditions.push(`(assigned = ANY($${pIdx}::text[]) OR assigned ILIKE ANY($${pIdx}::text[]))`);
             }
             statsParams.push(hierarchy.allowedList);
+            pIdx++;
         }
+
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
         const [statsResult, agentCountsResult] = await Promise.all([
             connectDB.query(`
@@ -482,12 +498,12 @@ export const getLeadsStats = async (req, res) => {
                 COUNT(*) FILTER (WHERE score <= ${coldT.to})::int                                                       AS cold,
                 COALESCE(AVG(score)::int, 50)                                                                            AS avg_score
               FROM leads
-              ${hierarchyFilter}
+              ${whereClause}
             `, statsParams),
             connectDB.query(`
               SELECT assigned, COUNT(*)::int AS count
               FROM leads
-              ${hierarchyFilter ? hierarchyFilter + ` AND assigned IS NOT NULL AND TRIM(assigned) != ''` : `WHERE assigned IS NOT NULL AND TRIM(assigned) != ''`}
+              ${whereClause ? whereClause + ` AND assigned IS NOT NULL AND TRIM(assigned) != ''` : `WHERE assigned IS NOT NULL AND TRIM(assigned) != ''`}
               GROUP BY assigned
             `, statsParams),
         ]);
@@ -524,14 +540,23 @@ export const getLeadsStats = async (req, res) => {
 export const getLeadById = async (req, res) => {
     try {
         const { id } = req.params;
-        const result = await connectDB.query(`
+        const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+        
+        let query = `
             SELECT l.*, 
                    p.name AS project_name, 
                    p.color AS project_color
             FROM leads l
             LEFT JOIN projects p ON (l.project_id = p.id::text OR l.project_id = p.name)
             WHERE l.id::text = $1::text
-        `, [String(id)]);
+        `;
+        const params = [String(id)];
+        if (companyId) {
+            query += ` AND (l.company_id::text = $2 OR l.company_id IS NULL)`;
+            params.push(String(companyId));
+        }
+
+        const result = await connectDB.query(query, params);
         if (!result.rows[0]) {
             return res.status(404).json({ success: false, message: 'Lead not found' });
         }
@@ -871,7 +896,17 @@ export const updateLead = async (req, res) => {
 export const deleteLead = async (req, res) => {
     try {
         const { id } = req.params;
-        const result = await connectDB.query(`DELETE FROM leads WHERE id::text = $1::text RETURNING id, name`, [String(id)]);
+        const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+        
+        let query = `DELETE FROM leads WHERE id::text = $1::text`;
+        const params = [String(id)];
+        if (companyId) {
+            query += ` AND (company_id::text = $2 OR company_id IS NULL)`;
+            params.push(String(companyId));
+        }
+        query += ` RETURNING id, name`;
+
+        const result = await connectDB.query(query, params);
         if (!result.rows[0]) {
             return res.status(404).json({ success: false, message: 'Lead not found' });
         }
@@ -885,6 +920,7 @@ export const deleteLead = async (req, res) => {
             action: 'deleted lead',
             leadName: deletedLead.name,
             leadId: id,
+            companyId: companyId,
             detail: `Lead "${deletedLead.name}" removed from CRM`,
         });
 
@@ -903,15 +939,21 @@ export const deleteLead = async (req, res) => {
 export const bulkDeleteLeads = async (req, res) => {
     try {
         const { ids } = req.body;
+        const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
         if (!Array.isArray(ids) || ids.length === 0) {
             return res.status(400).json({ success: false, message: 'ids array is required' });
         }
 
         const stringIds = ids.map((id) => String(id));
-        const result = await connectDB.query(
-            `DELETE FROM leads WHERE id::text = ANY($1::text[]) RETURNING id, name`,
-            [stringIds]
-        );
+        let query = `DELETE FROM leads WHERE id::text = ANY($1::text[])`;
+        const params = [stringIds];
+        if (companyId) {
+            query += ` AND (company_id::text = $2 OR company_id IS NULL)`;
+            params.push(String(companyId));
+        }
+        query += ` RETURNING id, name`;
+
+        const result = await connectDB.query(query, params);
 
         await logActivity({
             type: 'lead_deleted',
@@ -920,6 +962,7 @@ export const bulkDeleteLeads = async (req, res) => {
             userName: req.user?.name || 'Admin',
             action: 'deleted leads',
             leadName: `${result.rows.length} Leads`,
+            companyId: companyId,
             detail: `Deleted IDs: ${result.rows.map((r) => r.id).join(', ')}`,
         });
 
@@ -938,6 +981,7 @@ export const bulkDeleteLeads = async (req, res) => {
 export const bulkAssignLeads = async (req, res) => {
     try {
         const { ids, assigned } = req.body;
+        const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
         if (!Array.isArray(ids) || ids.length === 0) {
             return res.status(400).json({ success: false, message: 'ids array is required' });
         }
@@ -946,11 +990,15 @@ export const bulkAssignLeads = async (req, res) => {
         }
 
         const stringIds = ids.map((id) => String(id));
-        const result = await connectDB.query(
-            `UPDATE leads SET assigned = $1, last_activity = NOW(), updated_at = NOW()
-       WHERE id::text = ANY($2::text[]) RETURNING id, name`,
-            [assigned.trim(), stringIds]
-        );
+        let query = `UPDATE leads SET assigned = $1, last_activity = NOW(), updated_at = NOW() WHERE id::text = ANY($2::text[])`;
+        const params = [assigned.trim(), stringIds];
+        if (companyId) {
+            query += ` AND (company_id::text = $3 OR company_id IS NULL)`;
+            params.push(String(companyId));
+        }
+        query += ` RETURNING id, name`;
+
+        const result = await connectDB.query(query, params);
 
         await logActivity({
             type: 'assignment',
@@ -959,6 +1007,7 @@ export const bulkAssignLeads = async (req, res) => {
             userName: req.user?.name || 'Admin',
             action: 'assigned',
             leadName: `${result.rows.length} Leads`,
+            companyId: companyId,
             detail: `Assigned to ${assigned}`,
         });
 
@@ -977,6 +1026,7 @@ export const bulkAssignLeads = async (req, res) => {
 export const bulkChangeStage = async (req, res) => {
     try {
         const { ids, stage } = req.body;
+        const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
         if (!Array.isArray(ids) || ids.length === 0) {
             return res.status(400).json({ success: false, message: 'ids array is required' });
         }
@@ -985,11 +1035,15 @@ export const bulkChangeStage = async (req, res) => {
         }
 
         const stringIds = ids.map((id) => String(id));
-        const result = await connectDB.query(
-            `UPDATE leads SET stage = $1, last_activity = NOW(), updated_at = NOW()
-       WHERE id::text = ANY($2::text[]) RETURNING id, name`,
-            [stage.trim(), stringIds]
-        );
+        let query = `UPDATE leads SET stage = $1, last_activity = NOW(), updated_at = NOW() WHERE id::text = ANY($2::text[])`;
+        const params = [stage.trim(), stringIds];
+        if (companyId) {
+            query += ` AND (company_id::text = $3 OR company_id IS NULL)`;
+            params.push(String(companyId));
+        }
+        query += ` RETURNING id, name`;
+
+        const result = await connectDB.query(query, params);
 
         // Recalculate scores for leads moved to new stage
         const scoringConfig = await getScoringConfigFromDb().catch(() => null);
@@ -1013,6 +1067,7 @@ export const bulkChangeStage = async (req, res) => {
             userName: req.user?.name || 'Admin',
             action: 'moved',
             leadName: `${result.rows.length} Leads`,
+            companyId: companyId,
             detail: `Stage moved to ${stage}`,
         });
 
@@ -1031,15 +1086,22 @@ export const bulkChangeStage = async (req, res) => {
 export const autoAssignLeads = async (req, res) => {
     try {
         const { agents } = req.body; // ['Rajesh Kumar', 'Priya Sharma', ...]
+        const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
 
         if (!Array.isArray(agents) || agents.length === 0) {
             return res.status(400).json({ success: false, message: 'agents array is required' });
         }
 
-        // Get unassigned leads with full attributes
-        const unassigned = await connectDB.query(
-            `SELECT * FROM leads WHERE assigned IS NULL OR assigned = '' OR assigned = 'Unassigned' ORDER BY created_at ASC`
-        );
+        // Get unassigned leads with company filter
+        let query = `SELECT * FROM leads WHERE (assigned IS NULL OR assigned = '' OR assigned = 'Unassigned')`;
+        const params = [];
+        if (companyId) {
+            query += ` AND (company_id::text = $1 OR company_id IS NULL)`;
+            params.push(String(companyId));
+        }
+        query += ` ORDER BY created_at ASC`;
+
+        const unassigned = await connectDB.query(query, params);
 
         if (unassigned.rows.length === 0) {
             return res.status(200).json({ success: true, message: 'No unassigned leads found', data: { assigned: 0 } });
@@ -1069,6 +1131,7 @@ export const autoAssignLeads = async (req, res) => {
             userName: req.user?.name || 'Admin',
             action: 'assigned',
             leadName: `${assignedCount} Leads`,
+            companyId: companyId,
             detail: `Distributed using active assignment rules & strategy`,
         });
 
@@ -1087,15 +1150,20 @@ export const autoAssignLeads = async (req, res) => {
 export const reassignAgentLeads = async (req, res) => {
     try {
         const { fromAgent, toAgent } = req.body;
+        const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
         if (!fromAgent?.trim() || !toAgent?.trim()) {
             return res.status(400).json({ success: false, message: 'fromAgent and toAgent are required' });
         }
 
-        const result = await connectDB.query(
-            `UPDATE leads SET assigned = $1, last_activity = NOW(), updated_at = NOW()
-             WHERE assigned = $2 RETURNING id`,
-            [toAgent.trim(), fromAgent.trim()]
-        );
+        let query = `UPDATE leads SET assigned = $1, last_activity = NOW(), updated_at = NOW() WHERE assigned = $2`;
+        const params = [toAgent.trim(), fromAgent.trim()];
+        if (companyId) {
+            query += ` AND (company_id::text = $3 OR company_id IS NULL)`;
+            params.push(String(companyId));
+        }
+        query += ` RETURNING id`;
+
+        const result = await connectDB.query(query, params);
 
         if (result.rows.length > 0) {
             const initials = toAgent.trim().split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 3);

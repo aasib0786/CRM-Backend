@@ -35,9 +35,10 @@ export const generateAccessToken = (user) => {
       id: user.id,
       email: user.email,
       company_id: user.company_id,
+      companyId: user.company_id,
       role: user.role,
     },
-    process.env.JWT_SECRET_KEY,
+    process.env.JWT_SECRET_KEY || process.env.JWT_SECRET || 'abcd1234sjkynqoinkerhkaw',
     {
       expiresIn: process.env.ACCESS_TOKEN_EXPIRY || "1d",
     }
@@ -49,13 +50,13 @@ export const generateAccessToken = (user) => {
 export const generateRefreshToken = (user) => {
   return jwt.sign(
     {
-
       id: user.id,
       email: user.email,
       company_id: user.company_id,
+      companyId: user.company_id,
       role: user.role,
     },
-    process.env.REFRESH_TOKEN_SECRET,
+    process.env.REFRESH_TOKEN_SECRET || 'abcd1234sjkynqoinkerhkaw_refresh',
     {
       expiresIn: process.env.REFRESH_TOKEN_EXPIRY || "7d",
     }
@@ -65,8 +66,7 @@ export const generateRefreshToken = (user) => {
 
 
 
-// Verifies the Bearer token and attaches { id, companyId, role } to req.user.
-// Must match the payload shape signed in authController.js (register/login).
+// Verifies the Bearer token and attaches { id, companyId, company_id, role } to req.user.
 export const authenticate = (req, res, next) => {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
@@ -76,12 +76,16 @@ export const authenticate = (req, res, next) => {
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const secret = process.env.JWT_SECRET_KEY || process.env.JWT_SECRET || 'abcd1234sjkynqoinkerhkaw';
+    const decoded = jwt.verify(token, secret);
+    const compId = decoded.company_id || decoded.companyId;
     req.user = {
       id: decoded.id,
-      companyId: decoded.companyId,
+      companyId: compId,
+      company_id: compId,
       role: decoded.role,
     };
+    req.company_id = compId;
     next();
   } catch (error) {
     return res.status(401).json({ success: false, message: 'Invalid or expired token' });

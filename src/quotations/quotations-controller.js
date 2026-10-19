@@ -102,6 +102,15 @@ export const getQuotations = async (req, res) => {
     const params = [];
     let idx = 1;
 
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+    if (companyId) {
+      query += ` AND company_id::text = $${idx}`;
+      params.push(String(companyId));
+      idx++;
+    } else {
+      query += ` AND 1=0`;
+    }
+
     if (targetLeadId) {
       query += ` AND lead_id = $${idx}`;
       params.push(targetLeadId);
@@ -148,7 +157,16 @@ export const getQuotations = async (req, res) => {
 
 export const getQuotationStats = async (req, res) => {
   try {
-    const { rows } = await connectDB.query(`SELECT * FROM public.quotations`);
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+    let query = `SELECT * FROM public.quotations`;
+    const params = [];
+    if (companyId) {
+      query += ` WHERE company_id::text = $1`;
+      params.push(String(companyId));
+    } else {
+      query += ` WHERE 1=0`;
+    }
+    const { rows } = await connectDB.query(query, params);
     const total = rows.length;
     const pending = rows.filter(r => r.status === 'Draft' || r.status === 'Sent').length;
     const accepted = rows.filter(r => r.status === 'Accepted').length;
@@ -217,12 +235,13 @@ export const createQuotation = async (req, res) => {
     const countRes = await connectDB.query(`SELECT COUNT(*)::int AS count FROM public.quotations`);
     const count = countRes.rows[0]?.count || 0;
     const qNum = quote_number || quoteNo || `QT-${String(count + 1).padStart(3, '0')}`;
+    const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.body?.company_id || null;
 
     const { rows } = await connectDB.query(
       `INSERT INTO public.quotations (
         quote_number, lead_id, client_name, client_company, client_email, client_phone,
-        agent, quote_date, total_amount, discount, tax, status, valid_until, items, terms, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
+        agent, quote_date, total_amount, discount, tax, status, valid_until, items, terms, company_id, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW())
       RETURNING *`,
       [
         qNum,
@@ -239,7 +258,8 @@ export const createQuotation = async (req, res) => {
         status || 'Draft',
         valid_until || validUntil || null,
         JSON.stringify(items || []),
-        terms || ''
+        terms || '',
+        companyId ? String(companyId) : null,
       ]
     );
 

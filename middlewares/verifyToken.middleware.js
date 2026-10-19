@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
+import connectDB from "../src/pool.js";
 
-export const verifyToken = (req, res, next) => {
+export const verifyToken = async (req, res, next) => {
   try {
     let token;
 
@@ -36,12 +37,31 @@ export const verifyToken = (req, res, next) => {
       });
     }
 
-    // ✅ Verify
-    const decoded = jwt.verify(token, process.env.JWT_SECRET_KEY);
+    // ✅ Verify with configured or fallback JWT Secret
+    const secret = process.env.JWT_SECRET_KEY || process.env.JWT_SECRET || 'abcd1234sjkynqoinkerhkaw';
+    const decoded = jwt.verify(token, secret);
 
     req.user = decoded;
     req.role = decoded.role;
-    req.company_id = decoded.company_id; // convenience
+    req.company_id = decoded.company_id || decoded.companyId;
+
+    // ✅ Multi-Tenant Safeguard: if token lacks company_id, resolve directly from public.users
+    if (!req.company_id && (decoded.id || decoded.email)) {
+      try {
+        const uRes = await connectDB.query(
+          "SELECT company_id, role FROM public.users WHERE id::text = $1 OR LOWER(email) = LOWER($2) LIMIT 1",
+          [String(decoded.id || ''), String(decoded.email || '').trim()]
+        );
+        if (uRes.rows.length > 0 && uRes.rows[0].company_id) {
+          req.company_id = uRes.rows[0].company_id;
+          req.user.company_id = uRes.rows[0].company_id;
+          req.user.companyId = uRes.rows[0].company_id;
+          if (!req.role && uRes.rows[0].role) req.role = uRes.rows[0].role;
+        }
+      } catch (dbErr) {
+        // silent fallback
+      }
+    }
 
     next();
 

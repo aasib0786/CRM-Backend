@@ -15,8 +15,11 @@ import {
   getLeadWorkflowRuns,
   runDryRunSimulation,
 } from './workflows-controller.js';
+import { verifyToken } from '../../middlewares/verifyToken.middleware.js';
 
 const router = express.Router();
+
+router.use(verifyToken);
 
 // 1. Dry run simulation
 router.post('/dry-run', runDryRunSimulation);

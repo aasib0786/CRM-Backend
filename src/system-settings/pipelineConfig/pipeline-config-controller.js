@@ -11,6 +11,14 @@ import { getAssignmentConfigFromDb } from "../../leads/assignmentService.js";
 // GET /pipeline-stages/get-all
 export const getPipelineStages = async (req, res) => {
     try {
+        const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+        let filter = `WHERE ps.is_active = true`;
+        let params = [];
+        if (companyId) {
+            filter += ` AND (ps.company_id::text = $1 OR ps.company_id IS NULL)`;
+            params.push(String(companyId));
+        }
+
         const result = await pool.query(`
       SELECT
         ps.*,
@@ -30,10 +38,10 @@ export const getPipelineStages = async (req, res) => {
         ) AS extra_fields
       FROM pipeline_stages ps
       LEFT JOIN stage_extra_fields sef ON sef.stage_id = ps.id AND sef.is_active = true
-      WHERE ps.is_active = true
+      ${filter}
       GROUP BY ps.id
       ORDER BY ps.sort_order ASC, ps.id ASC
-    `);
+    `, params);
 
         return res.status(200).json({
             success: true,
@@ -78,16 +86,20 @@ export const getPipelineStageById = async (req, res) => {
 export const createPipelineStage = async (req, res) => {
     try {
         const { name, color, required, sortOrder } = req.body;
+        const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'] || null;
         if (!name?.trim()) return res.status(400).json({ success: false, message: 'Stage name is required' });
 
-        const existing = await pool.query(`SELECT id FROM pipeline_stages WHERE name ILIKE $1`, [name.trim()]);
+        const existing = await pool.query(
+            `SELECT id FROM pipeline_stages WHERE name ILIKE $1 ${companyId ? 'AND (company_id::text = $2 OR company_id IS NULL)' : ''}`,
+            companyId ? [name.trim(), String(companyId)] : [name.trim()]
+        );
         if (existing.rows.length > 0) return res.status(409).json({ success: false, message: `Stage "${name}" already exists` });
 
         const maxOrder = await pool.query(`SELECT COALESCE(MAX(sort_order),0)+1 AS next FROM pipeline_stages`);
         const result = await pool.query(
-            `INSERT INTO pipeline_stages (name, color, required, sort_order, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, NOW(), NOW()) RETURNING *`,
-            [name.trim(), color || '#64748b', required ?? true, sortOrder ?? maxOrder.rows[0].next]
+            `INSERT INTO pipeline_stages (name, color, required, sort_order, created_at, updated_at, company_id)
+       VALUES ($1, $2, $3, $4, NOW(), NOW(), $5) RETURNING *`,
+            [name.trim(), color || '#64748b', required ?? true, sortOrder ?? maxOrder.rows[0].next, companyId]
         );
 
         const createdStage = result.rows[0];
@@ -98,6 +110,7 @@ export const createPipelineStage = async (req, res) => {
             userName: req.user?.name || 'Admin',
             action: 'created pipeline stage',
             leadName: createdStage.name,
+            companyId: companyId,
             detail: `Color: ${createdStage.color} • Sort Order: ${createdStage.sort_order}`,
         });
 
@@ -638,7 +651,15 @@ const toSourceDTO = (r) => ({
 // GET /lead-sources/get-all
 export const getLeadSources = async (req, res) => {
     try {
-        const result = await pool.query(`SELECT * FROM lead_sources ORDER BY sort_order ASC, id ASC`);
+        const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'];
+        let query = `SELECT * FROM lead_sources`;
+        let params = [];
+        if (companyId) {
+            query += ` WHERE (company_id::text = $1 OR company_id IS NULL)`;
+            params.push(String(companyId));
+        }
+        query += ` ORDER BY sort_order ASC, id ASC`;
+        const result = await pool.query(query, params);
         return res.status(200).json({ success: true, data: result.rows.map(toSourceDTO) });
     } catch (error) {
         console.error('getLeadSources error:', error.message);
@@ -650,17 +671,21 @@ export const getLeadSources = async (req, res) => {
 export const createLeadSource = async (req, res) => {
     try {
         const { name, color, active, priority } = req.body;
+        const companyId = req.user?.company_id || req.user?.companyId || req.company_id || req.headers?.['x-company-id'] || null;
         if (!name?.trim()) return res.status(400).json({ success: false, message: 'Source name is required' });
 
         const id = name.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-        const existing = await pool.query(`SELECT id FROM lead_sources WHERE id = $1`, [id]);
+        const existing = await pool.query(
+            `SELECT id FROM lead_sources WHERE id = $1 ${companyId ? 'AND (company_id::text = $2 OR company_id IS NULL)' : ''}`,
+            companyId ? [id, String(companyId)] : [id]
+        );
         if (existing.rows.length > 0) return res.status(409).json({ success: false, message: `Source "${name}" already exists` });
 
         const maxOrder = await pool.query(`SELECT COALESCE(MAX(sort_order),0)+1 AS next FROM lead_sources`);
         const result = await pool.query(
-            `INSERT INTO lead_sources (id, name, color, active, priority, sort_order, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW()) RETURNING *`,
-            [id, name.trim(), color || '#64748b', active ?? true, priority || 'Low', maxOrder.rows[0].next]
+            `INSERT INTO lead_sources (id, name, color, active, priority, sort_order, created_at, updated_at, company_id)
+       VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW(),$7) RETURNING *`,
+            [id, name.trim(), color || '#64748b', active ?? true, priority || 'Low', maxOrder.rows[0].next, companyId]
         );
         return res.status(201).json({ success: true, message: 'Source created', data: toSourceDTO(result.rows[0]) });
     } catch (error) {
